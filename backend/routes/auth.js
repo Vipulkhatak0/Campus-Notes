@@ -1,7 +1,7 @@
 
 import express from 'express';
 import bcryptjs from 'bcryptjs';
-import supabase from '../..lib/supabase.js';
+import supabase from '../../lib/supabase.js';
 import { generateToken, verifyToken } from '../middleware/auth.js';
 import { validateSignup, validateLogin } from '../middleware/validation.js';
 

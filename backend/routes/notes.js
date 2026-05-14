@@ -1,6 +1,6 @@
 
 import express from 'express';
-import supabase from '../lib/supabase.js';
+import supabase from '../../lib/supabase.js'
 import { verifyToken } from '../middleware/auth.js';
 import { validateNotes } from '../middleware/validation.js';
 

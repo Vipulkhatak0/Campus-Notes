@@ -6,7 +6,6 @@ import { verifyToken, isAdmin } from '../middleware/auth.js';
 
 const router = express.Router();
 
-// Get dashboard stats
 router.get('/stats', verifyToken, isAdmin, async (req, res) => {
   try {
     const totalUsers = await User.countDocuments();
@@ -50,7 +49,6 @@ router.get('/stats', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Get all users
 router.get('/users', verifyToken, isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -80,7 +78,7 @@ router.get('/users', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Change user role
+
 router.put('/users/:id/role', verifyToken, isAdmin, async (req, res) => {
   try {
     const { role } = req.body;
@@ -105,7 +103,6 @@ router.put('/users/:id/role', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Ban/Unban user
 router.put('/users/:id/ban', verifyToken, isAdmin, async (req, res) => {
   try {
     const { isBanned } = req.body;
@@ -126,7 +123,7 @@ router.put('/users/:id/ban', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Get flagged notes
+
 router.get('/notes/flagged', verifyToken, isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -156,7 +153,7 @@ router.get('/notes/flagged', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Flag notes for review
+
 router.post('/notes/:id/flag', verifyToken, async (req, res) => {
   try {
     const { reason } = req.body;
@@ -181,7 +178,6 @@ router.post('/notes/:id/flag', verifyToken, async (req, res) => {
   }
 });
 
-// Approve/Reject flagged notes
 router.put('/notes/:id/moderation', verifyToken, isAdmin, async (req, res) => {
   try {
     const { action } = req.body;
@@ -215,7 +211,6 @@ router.put('/notes/:id/moderation', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Delete notes (admin only)
 router.delete('/notes/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     const notes = await Notes.findByIdAndDelete(req.params.id);
@@ -231,7 +226,7 @@ router.delete('/notes/:id', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Delete group (admin only)
+
 router.delete('/groups/:id', verifyToken, isAdmin, async (req, res) => {
   try {
     await Group.findByIdAndDelete(req.params.id);
@@ -242,7 +237,7 @@ router.delete('/groups/:id', verifyToken, isAdmin, async (req, res) => {
   }
 });
 
-// Get all notes for moderation
+
 router.get('/notes', verifyToken, isAdmin, async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;

@@ -2,181 +2,186 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
+
 import { useAuth } from '@/hooks/useAuth';
-import { useToast } from '@/hooks/use-toast';
 
 export default function SignupPage() {
-  const [formData, setFormData] = useState({
-    fullName: '',
-    email: '',
-    username: '',
-    password: '',
-    confirmPassword: '',
-    college: '',
-    branch: '',
-  });
-  const [isLoading, setIsLoading] = useState(false);
-  const { signup } = useAuth();
-  const { toast } = useToast();
+  const router = useRouter();
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const { signup } = useAuth();
+
+  const [formData, setFormData] =
+    useState({
+      fullName: '',
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      college: '',
+      branch: '',
+    });
+
+  const [isLoading, setIsLoading] =
+    useState(false);
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
     setFormData({
       ...formData,
       [e.target.name]: e.target.value,
     });
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (
+    e: React.FormEvent
+  ) => {
     e.preventDefault();
-    setIsLoading(true);
 
     try {
-      if (formData.password !== formData.confirmPassword) {
-        throw new Error('Passwords do not match');
+      setIsLoading(true);
+
+      if (
+        formData.password !==
+        formData.confirmPassword
+      ) {
+        alert(
+          'Passwords do not match'
+        );
+        return;
       }
 
-      await signup(formData.email, formData.username, formData.password, formData.fullName);
-      toast({
-        title: 'Success',
-        description: 'Account created successfully',
-      });
+      // ✅ SUPABASE SIGNUP
+      await signup(
+        formData.email,
+        formData.password
+      );
+
+      alert(
+        'Account created successfully 🚀'
+      );
+
+      router.push('/login');
     } catch (error: any) {
-      toast({
-        title: 'Error',
-        description: error.message,
-        variant: 'destructive',
-      });
+      console.error(error);
+
+      alert(
+        error.message ||
+          'Signup failed'
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md bg-slate-800 border-slate-700 shadow-2xl">
+    <div className="min-h-screen bg-black flex items-center justify-center p-4">
+      <Card className="w-full max-w-md bg-zinc-900 border-zinc-800">
         <div className="p-8">
-          <h1 className="text-3xl font-bold text-white mb-2">Join Now</h1>
-          <p className="text-slate-400 mb-8">Create your account to share notes</p>
+          <h1 className="text-3xl font-bold text-white mb-2">
+            Create Account
+          </h1>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Full Name
-              </label>
-              <Input
-                type="text"
-                name="fullName"
-                placeholder="John Doe"
-                value={formData.fullName}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-              />
-            </div>
+          <p className="text-zinc-400 mb-8">
+            Join your college notes
+            community
+          </p>
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Username
-              </label>
-              <Input
-                type="text"
-                name="username"
-                placeholder="johndoe"
-                value={formData.username}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-                required
-              />
-            </div>
+          <form
+            onSubmit={handleSubmit}
+            className="space-y-4"
+          >
+            <Input
+              type="text"
+              name="fullName"
+              placeholder="Full Name"
+              value={formData.fullName}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Email Address
-              </label>
-              <Input
-                type="email"
-                name="email"
-                placeholder="you@example.com"
-                value={formData.email}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-                required
-              />
-            </div>
+            <Input
+              type="text"
+              name="username"
+              placeholder="Username"
+              value={formData.username}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                College
-              </label>
-              <Input
-                type="text"
-                name="college"
-                placeholder="Your College"
-                value={formData.college}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-              />
-            </div>
+            <Input
+              type="email"
+              name="email"
+              placeholder="Email"
+              value={formData.email}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+              required
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Branch
-              </label>
-              <Input
-                type="text"
-                name="branch"
-                placeholder="Computer Science"
-                value={formData.branch}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-              />
-            </div>
+            <Input
+              type="text"
+              name="college"
+              placeholder="College"
+              value={formData.college}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Password
-              </label>
-              <Input
-                type="password"
-                name="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-                required
-              />
-            </div>
+            <Input
+              type="text"
+              name="branch"
+              placeholder="Branch"
+              value={formData.branch}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+            />
 
-            <div>
-              <label className="block text-sm font-medium text-slate-200 mb-2">
-                Confirm Password
-              </label>
-              <Input
-                type="password"
-                name="confirmPassword"
-                placeholder="••••••••"
-                value={formData.confirmPassword}
-                onChange={handleChange}
-                className="bg-slate-700 border-slate-600 text-white placeholder:text-slate-500"
-                required
-              />
-            </div>
+            <Input
+              type="password"
+              name="password"
+              placeholder="Password"
+              value={formData.password}
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+              required
+            />
+
+            <Input
+              type="password"
+              name="confirmPassword"
+              placeholder="Confirm Password"
+              value={
+                formData.confirmPassword
+              }
+              onChange={handleChange}
+              className="bg-zinc-800 text-white border-zinc-700"
+              required
+            />
 
             <Button
               type="submit"
               disabled={isLoading}
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold h-10 mt-4"
+              className="w-full bg-blue-600 hover:bg-blue-700"
             >
-              {isLoading ? 'Creating Account...' : 'Create Account'}
+              {isLoading
+                ? 'Creating Account...'
+                : 'Create Account'}
             </Button>
           </form>
 
-          <p className="text-center text-slate-400 text-sm mt-6">
+          <p className="text-zinc-400 text-sm text-center mt-6">
             Already have an account?{' '}
-            <Link href="/login" className="text-blue-400 hover:text-blue-300 font-medium">
-              Sign in
+            <Link
+              href="/login"
+              className="text-blue-400 hover:text-blue-300"
+            >
+              Login
             </Link>
           </p>
         </div>

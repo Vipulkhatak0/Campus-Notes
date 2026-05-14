@@ -1,70 +1,91 @@
+
 import express from 'express';
-import Notes from '../models/Notes.js';
-import User from '../models/User.js';
+import supabase from '../lib/supabase.js';
 import { verifyToken } from '../middleware/auth.js';
 import { validateNotes } from '../middleware/validation.js';
 
 const router = express.Router();
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER — parse tags from either array or comma-string
-// ─────────────────────────────────────────────────────────────────────────────
 const parseTags = (tags) => {
   if (!tags) return [];
   if (Array.isArray(tags)) return tags.map(t => String(t).trim()).filter(Boolean);
   return String(tags).split(',').map(t => t.trim()).filter(Boolean);
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/notes — Create a note
-// ─────────────────────────────────────────────────────────────────────────────
+const getNoteWithRelations = async (noteId) => {
+  const [{ data: note }, { count: likesCount }, { data: comments }] = await Promise.all([
+    supabase
+      .from('notes')
+      .select(`
+        *,
+        author:users!notes_author_id_fkey (
+          id, username, full_name, avatar, college, branch, email
+        )
+      `)
+      .eq('id', noteId)
+      .maybeSingle(),
+
+    supabase
+      .from('note_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('note_id', noteId),
+
+    supabase
+      .from('comments')
+      .select(`
+        *,
+        user:users!comments_user_id_fkey (id, username, full_name, avatar)
+      `)
+      .eq('note_id', noteId)
+      .order('created_at', { ascending: true }),
+  ]);
+
+  if (!note) return null;
+  return { ...note, likesCount: likesCount || 0, comments: comments || [] };
+};
+
+
 router.post('/', verifyToken, validateNotes, async (req, res) => {
   try {
     const {
-      title,
-      description,
-      content,
-      subject,
-      semester,
-      branch,
-      tags,
-      category,
-      fileUrl,
-      fileName,
-      fileType,
-      fileSize,
-      isPublished,   // true = publish now, false = save as draft
+      title, description, content, subject, semester, branch,
+      tags, category, fileUrl, fileName, fileType, fileSize, isPublished,
     } = req.body;
 
-    const note = new Notes({
-      title:       title?.trim(),
-      description: description?.trim() || '',
-      content:     content?.trim()     || '',
-      author:      req.userId,
-      subject:     subject?.trim(),
-      semester:    parseInt(semester)  || 1,
-      branch:      branch?.trim()      || '',
-      tags:        parseTags(tags),
-      category:    category            || 'lecture',
-      fileUrl:     fileUrl             || null,
-      fileName:    fileName            || null,
-      fileType:    fileType            || null,
-      fileSize:    fileSize            || null,
-      isPublished: isPublished !== false,   // default true unless explicitly false
-    });
+    const publish = isPublished !== false;
 
-    await note.save();
+    const { data: note, error } = await supabase
+      .from('notes')
+      .insert({
+        title:       title?.trim(),
+        description: description?.trim() || '',
+        content:     content?.trim()     || '',
+        author_id:   req.userId,
+        subject:     subject?.trim(),
+        semester:    parseInt(semester)  || 1,
+        branch:      branch?.trim()      || '',
+        tags:        parseTags(tags),
+        category:    category            || 'lecture',
+        file_url:    fileUrl             || null,
+        file_name:   fileName            || null,
+        file_type:   fileType            || null,
+        file_size:   fileSize            || null,
+        is_published: publish,
+      })
+      .select()
+      .single();
 
-    // Increment notesCount only for published notes
-    if (note.isPublished) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { notesCount: 1 } });
+    if (error) throw error;
+
+    if (publish) {
+      await supabase.rpc('increment_notes_count', { user_id: req.userId, delta: 1 });
     }
 
-    await note.populate('author', 'username fullName avatar');
+    const full = await getNoteWithRelations(note.id);
 
     res.status(201).json({
-      message: note.isPublished ? 'Note published successfully' : 'Draft saved successfully',
-      notes: note,
+      message: publish ? 'Note published successfully' : 'Draft saved successfully',
+      notes: full,
     });
   } catch (error) {
     console.error('Create note error:', error);
@@ -72,29 +93,43 @@ router.post('/', verifyToken, validateNotes, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/notes — Get all published notes (paginated)
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
     const page  = parseInt(req.query.page)  || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const skip  = (page - 1) * limit;
+    const from  = (page - 1) * limit;
+    const to    = from + limit - 1;
 
-    const filter = { isPublished: true, isFlagged: false };
+    const { data: notes, error, count } = await supabase
+      .from('notes')
+      .select(`
+        *,
+        author:users!notes_author_id_fkey (id, username, full_name, avatar, college, branch)
+      `, { count: 'exact' })
+      .eq('is_published', true)
+      .eq('is_flagged', false)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-    const [notes, total] = await Promise.all([
-      Notes.find(filter)
-        .populate('author', 'username fullName avatar college branch')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Notes.countDocuments(filter),
-    ]);
+    if (error) throw error;
+
+   
+    const noteIds = notes.map(n => n.id);
+    const { data: likesRows } = await supabase
+      .from('note_likes')
+      .select('note_id')
+      .in('note_id', noteIds);
+
+    const likesByNote = {};
+    (likesRows || []).forEach(r => {
+      likesByNote[r.note_id] = (likesByNote[r.note_id] || 0) + 1;
+    });
+
+    const enriched = notes.map(n => ({ ...n, likesCount: likesByNote[n.id] || 0 }));
 
     res.json({
-      notes,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      notes: enriched,
+      pagination: { page, limit, total: count, pages: Math.ceil(count / limit) },
     });
   } catch (error) {
     console.error('Get notes error:', error);
@@ -102,33 +137,30 @@ router.get('/', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/notes/subject/:subject — Notes by subject
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/subject/:subject', async (req, res) => {
   try {
     const page  = parseInt(req.query.page)  || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const skip  = (page - 1) * limit;
+    const from  = (page - 1) * limit;
+    const to    = from + limit - 1;
 
-    const filter = {
-      subject: { $regex: req.params.subject, $options: 'i' },
-      isPublished: true,
-      isFlagged: false,
-    };
+    const { data: notes, error, count } = await supabase
+      .from('notes')
+      .select(`
+        *,
+        author:users!notes_author_id_fkey (id, username, full_name, avatar)
+      `, { count: 'exact' })
+      .ilike('subject', `%${req.params.subject}%`)
+      .eq('is_published', true)
+      .eq('is_flagged', false)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-    const [notes, total] = await Promise.all([
-      Notes.find(filter)
-        .populate('author', 'username fullName avatar')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Notes.countDocuments(filter),
-    ]);
+    if (error) throw error;
 
     res.json({
-      notes,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      notes: notes || [],
+      pagination: { page, limit, total: count, pages: Math.ceil(count / limit) },
     });
   } catch (error) {
     console.error('Get notes by subject error:', error);
@@ -136,30 +168,28 @@ router.get('/subject/:subject', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/notes/user/:userId — Notes by user
-// !! MUST be before /:id so Express doesn't treat "user" as an id !!
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/user/:userId', async (req, res) => {
   try {
     const page  = parseInt(req.query.page)  || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const skip  = (page - 1) * limit;
+    const from  = (page - 1) * limit;
+    const to    = from + limit - 1;
 
-    const filter = { author: req.params.userId };
+    const { data: notes, error, count } = await supabase
+      .from('notes')
+      .select(`
+        *,
+        author:users!notes_author_id_fkey (id, username, full_name, avatar)
+      `, { count: 'exact' })
+      .eq('author_id', req.params.userId)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-    const [notes, total] = await Promise.all([
-      Notes.find(filter)
-        .populate('author', 'username fullName avatar')
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Notes.countDocuments(filter),
-    ]);
+    if (error) throw error;
 
     res.json({
-      notes,
-      pagination: { page, limit, total, pages: Math.ceil(total / limit) },
+      notes: notes || [],
+      pagination: { page, limit, total: count, pages: Math.ceil(count / limit) },
     });
   } catch (error) {
     console.error('Get user notes error:', error);
@@ -167,19 +197,11 @@ router.get('/user/:userId', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// GET /api/notes/:id — Get single note (increments views)
-// ─────────────────────────────────────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    const note = await Notes.findByIdAndUpdate(
-      req.params.id,
-      { $inc: { views: 1 } },
-      { new: true }
-    )
-      .populate('author', 'username fullName avatar college branch email')
-      .populate({ path: 'comments.user', select: 'username fullName avatar' });
+    await supabase.rpc('increment_views', { note_id: req.params.id });
 
+    const note = await getNoteWithRelations(req.params.id);
     if (!note) return res.status(404).json({ error: 'Note not found' });
 
     res.json(note);
@@ -189,48 +211,47 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PUT /api/notes/:id — Update note
-// ─────────────────────────────────────────────────────────────────────────────
 router.put('/:id', verifyToken, async (req, res) => {
   try {
-    const existing = await Notes.findById(req.params.id);
-    if (!existing) return res.status(404).json({ error: 'Note not found' });
+    const { data: existing, error: fetchError } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
 
-    if (existing.author.toString() !== req.userId) {
-      return res.status(403).json({ error: 'Not authorised to edit this note' });
-    }
+    if (fetchError || !existing) return res.status(404).json({ error: 'Note not found' });
+    if (existing.author_id !== req.userId) return res.status(403).json({ error: 'Not authorised to edit this note' });
 
     const {
-      title, description, content,
-      subject, semester, branch,
-      tags, category, isPublished,
+      title, description, content, subject,
+      semester, branch, tags, category, isPublished,
     } = req.body;
 
-    // If promoting draft → published for first time, bump notesCount
-    const wasPublished  = existing.isPublished;
-    const willPublish   = isPublished !== undefined ? isPublished : existing.isPublished;
-    if (!wasPublished && willPublish) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { notesCount: 1 } });
+    const willPublish = isPublished !== undefined ? isPublished : existing.is_published;
+
+    if (!existing.is_published && willPublish) {
+      await supabase.rpc('increment_notes_count', { user_id: req.userId, delta: 1 });
     }
 
-    const updated = await Notes.findByIdAndUpdate(
-      req.params.id,
-      {
-        title:       title?.trim()       ?? existing.title,
-        description: description?.trim() ?? existing.description,
-        content:     content?.trim()     ?? existing.content,
-        subject:     subject?.trim()     ?? existing.subject,
-        semester:    semester ? parseInt(semester) : existing.semester,
-        branch:      branch?.trim()      ?? existing.branch,
-        tags:        tags ? parseTags(tags) : existing.tags,
-        category:    category            ?? existing.category,
-        isPublished: willPublish,
-        updatedAt:   Date.now(),
-      },
-      { new: true }
-    ).populate('author', 'username fullName avatar');
+    const { error: updateError } = await supabase
+      .from('notes')
+      .update({
+        title:        title?.trim()       ?? existing.title,
+        description:  description?.trim() ?? existing.description,
+        content:      content?.trim()     ?? existing.content,
+        subject:      subject?.trim()     ?? existing.subject,
+        semester:     semester ? parseInt(semester) : existing.semester,
+        branch:       branch?.trim()      ?? existing.branch,
+        tags:         tags ? parseTags(tags) : existing.tags,
+        category:     category            ?? existing.category,
+        is_published: willPublish,
+        updated_at:   new Date().toISOString(),
+      })
+      .eq('id', req.params.id);
 
+    if (updateError) throw updateError;
+
+    const updated = await getNoteWithRelations(req.params.id);
     res.json({ message: 'Note updated successfully', notes: updated });
   } catch (error) {
     console.error('Update note error:', error);
@@ -238,22 +259,23 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// DELETE /api/notes/:id — Delete note
-// ─────────────────────────────────────────────────────────────────────────────
+
 router.delete('/:id', verifyToken, async (req, res) => {
   try {
-    const note = await Notes.findById(req.params.id);
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const { data: note, error: fetchError } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
 
-    if (note.author.toString() !== req.userId) {
-      return res.status(403).json({ error: 'Not authorised to delete this note' });
-    }
+    if (fetchError || !note) return res.status(404).json({ error: 'Note not found' });
+    if (note.author_id !== req.userId) return res.status(403).json({ error: 'Not authorised to delete this note' });
 
-    await Notes.findByIdAndDelete(req.params.id);
+    const { error } = await supabase.from('notes').delete().eq('id', req.params.id);
+    if (error) throw error;
 
-    if (note.isPublished) {
-      await User.findByIdAndUpdate(req.userId, { $inc: { notesCount: -1 } });
+    if (note.is_published) {
+      await supabase.rpc('increment_notes_count', { user_id: req.userId, delta: -1 });
     }
 
     res.json({ message: 'Note deleted successfully' });
@@ -263,21 +285,20 @@ router.delete('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/notes/:id/like   — Like a note
-// POST /api/notes/:id/unlike — Unlike a note
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/:id/like', verifyToken, async (req, res) => {
   try {
-    const note = await Notes.findByIdAndUpdate(
-      req.params.id,
-      { $addToSet: { likes: req.userId } },
-      { new: true }
-    ).populate('author', 'username fullName avatar');
+    const { error } = await supabase
+      .from('note_likes')
+      .upsert({ note_id: req.params.id, user_id: req.userId });
 
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    if (error) throw error;
 
-    res.json({ message: 'Liked successfully', notes: note, likesCount: note.likes.length });
+    const { count } = await supabase
+      .from('note_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('note_id', req.params.id);
+
+    res.json({ message: 'Liked successfully', likesCount: count || 0 });
   } catch (error) {
     console.error('Like error:', error);
     res.status(500).json({ error: 'Failed to like note' });
@@ -286,61 +307,53 @@ router.post('/:id/like', verifyToken, async (req, res) => {
 
 router.post('/:id/unlike', verifyToken, async (req, res) => {
   try {
-    const note = await Notes.findByIdAndUpdate(
-      req.params.id,
-      { $pull: { likes: req.userId } },
-      { new: true }
-    ).populate('author', 'username fullName avatar');
+    const { error } = await supabase
+      .from('note_likes')
+      .delete()
+      .eq('note_id', req.params.id)
+      .eq('user_id', req.userId);
 
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    if (error) throw error;
 
-    res.json({ message: 'Unliked successfully', notes: note, likesCount: note.likes.length });
+    const { count } = await supabase
+      .from('note_likes')
+      .select('*', { count: 'exact', head: true })
+      .eq('note_id', req.params.id);
+
+    res.json({ message: 'Unliked successfully', likesCount: count || 0 });
   } catch (error) {
     console.error('Unlike error:', error);
     res.status(500).json({ error: 'Failed to unlike note' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/notes/:id/comments — Add a comment
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/:id/comments', verifyToken, async (req, res) => {
   try {
     const { text } = req.body;
+    if (!text?.trim()) return res.status(400).json({ error: 'Comment text is required' });
 
-    if (!text?.trim()) {
-      return res.status(400).json({ error: 'Comment text is required' });
-    }
+    const { error } = await supabase
+      .from('comments')
+      .insert({ note_id: req.params.id, user_id: req.userId, text: text.trim() });
 
-    const note = await Notes.findByIdAndUpdate(
-      req.params.id,
-      {
-        $push: {
-          comments: {
-            user:      req.userId,
-            text:      text.trim(),
-            createdAt: Date.now(),
-          },
-        },
-      },
-      { new: true }
-    ).populate({ path: 'comments.user', select: 'username fullName avatar' });
+    if (error) throw error;
 
-    if (!note) return res.status(404).json({ error: 'Note not found' });
+    const { data: comments } = await supabase
+      .from('comments')
+      .select(`*, user:users!comments_user_id_fkey (id, username, full_name, avatar)`)
+      .eq('note_id', req.params.id)
+      .order('created_at', { ascending: true });
 
-    res.json({ message: 'Comment added successfully', comments: note.comments });
+    res.json({ message: 'Comment added successfully', comments: comments || [] });
   } catch (error) {
     console.error('Comment error:', error);
     res.status(500).json({ error: 'Failed to add comment' });
   }
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// POST /api/notes/:id/download — Record a download
-// ─────────────────────────────────────────────────────────────────────────────
 router.post('/:id/download', verifyToken, async (req, res) => {
   try {
-    await Notes.findByIdAndUpdate(req.params.id, { $inc: { downloads: 1 } });
+    await supabase.rpc('increment_downloads', { note_id: req.params.id });
     res.json({ message: 'Download recorded' });
   } catch (error) {
     console.error('Download error:', error);

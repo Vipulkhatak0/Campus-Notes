@@ -1,105 +1,151 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { AuthContext, User } from '@/hooks/useAuth';
-import { authApi } from '@/lib/api';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+} from 'react';
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+import { supabase } from '@/lib/supabase';
 
-  // Restore session from localStorage on mount
-  useEffect(() => {
-    try {
-      const token = localStorage.getItem('token');
-      const stored = localStorage.getItem('user');
-      if (token && stored) {
-        setUser(JSON.parse(stored));
-      }
-    } catch {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const signup = useCallback(async (
+interface AuthContextType {
+  user: any;
+  loading: boolean;
+  isAuthenticated: boolean;
+  signup: (
     email: string,
-    username: string,
-    password: string,
-    fullName = ''
-  ) => {
-    setLoading(true);
-    try {
-      const response = await authApi.signup({ email, username, password, fullName });
-      if (response.token && response.user) {
-        localStorage.setItem('token', response.token);
-        localStorage.setItem('user', JSON.stringify(response.user));
-        setUser(response.user as User);
-        router.push('/dashboard');
-      }
-    } catch (error: any) {
-      throw new Error(error.message || 'Signup failed');
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
+    password: string
+  ) => Promise<void>;
+  login: (
+    email: string,
+    password: string
+  ) => Promise<void>;
+  logout: () => Promise<void>;
+}
 
-  const login = useCallback(async (email: string, password: string) => {
-    setLoading(true);
-    try {
-      const response = await authApi.login({ email, password });
-      if (response.token && response.user) {
-        localStorage.setItem('token', response.token);
-        localStorage.setItem('user', JSON.stringify(response.user));
-        setUser(response.user as User);
-        router.push('/dashboard');
-      }
-    } catch (error: any) {
-      throw new Error(error.message || 'Login failed');
-    } finally {
-      setLoading(false);
-    }
-  }, [router]);
+export const AuthContext =
+  createContext<AuthContextType | null>(null);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setUser(null);
-    router.push('/');
-  }, [router]);
+export function AuthProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const [user, setUser] =
+    useState<any>(null);
 
-  const updateProfile = useCallback(async (data: Partial<User>) => {
-    setLoading(true);
-    try {
-      const response = await authApi.updateProfile(data);
-      if (response.user) {
-        localStorage.setItem('user', JSON.stringify(response.user));
-        setUser(response.user as User);
-      }
-    } catch (error: any) {
-      throw new Error(error.message || 'Profile update failed');
-    } finally {
+  const [loading, setLoading] =
+    useState(true);
+
+  useEffect(() => {
+    const getUser = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      setUser(user);
       setLoading(false);
-    }
+    };
+
+    getUser();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange(
+      (_, session) => {
+        setUser(session?.user || null);
+      }
+    );
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
+
+  const signup = async (
+    email: string,
+    password: string
+  ) => {
+    const { data, error } =
+      await supabase.auth.signUp({
+        email,
+        password,
+      });
+
+    console.log(
+      'SIGNUP DATA:',
+      data
+    );
+
+    console.log(
+      'SIGNUP ERROR:',
+      error
+    );
+
+    if (error) {
+      alert(error.message);
+      throw error;
+    }
+  };
+
+  const login = async (
+    email: string,
+    password: string
+  ) => {
+    const { data, error } =
+      await supabase.auth.signInWithPassword(
+        {
+          email,
+          password,
+        }
+      );
+
+    console.log(
+      'LOGIN DATA:',
+      data
+    );
+
+    console.log(
+      'LOGIN ERROR:',
+      error
+    );
+
+    if (error) {
+      alert(error.message);
+      throw error;
+    }
+  };
+
+  const logout = async () => {
+    await supabase.auth.signOut();
+  };
 
   return (
     <AuthContext.Provider
       value={{
         user,
         loading,
-        isAuthenticated: !!user,
-        signup,
         login,
+        signup,
         logout,
-        updateProfile,
+        isAuthenticated: !!user,
       }}
     >
       {children}
     </AuthContext.Provider>
   );
 }
+
+export const useAuth = () => {
+  const context =
+    useContext(AuthContext);
+
+  if (!context) {
+    throw new Error(
+      'useAuth must be used within AuthProvider'
+    );
+  }
+
+  return context;
+};

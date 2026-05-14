@@ -1,41 +1,72 @@
+
 import express from 'express';
-import User from '../models/User.js';
+import bcryptjs from 'bcryptjs';
+import supabase from '../lib/supabase.js';
 import { generateToken, verifyToken } from '../middleware/auth.js';
 import { validateSignup, validateLogin } from '../middleware/validation.js';
 
 const router = express.Router();
 
-// Signup endpoint
+
+const formatUser = (u) => ({
+  id:          u.id,
+  username:    u.username,
+  email:       u.email,
+  fullName:    u.full_name,
+  college:     u.college,
+  branch:      u.branch,
+  semester:    u.semester,
+  avatar:      u.avatar,
+  bio:         u.bio,
+  role:        u.role,
+  isVerified:  u.is_verified,
+  notesCount:  u.notes_count,
+  createdAt:   u.created_at,
+  updatedAt:   u.updated_at,
+});
+
 router.post('/signup', validateSignup, async (req, res) => {
   try {
     const { username, email, password, fullName, college, branch, semester } = req.body;
 
-    // Check if user already exists
-    let user = await User.findOne({ $or: [{ email }, { username }] });
-    if (user) {
+   
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .or(`email.eq.${email},username.eq.${username}`)
+      .maybeSingle();
+
+    if (existing) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Create new user
-    user = new User({
-      username,
-      email,
-      password,
-      fullName,
-      college,
-      branch,
-      semester
-    });
+   
+    const salt = await bcryptjs.genSalt(10);
+    const hashedPassword = await bcryptjs.hash(password, salt);
 
-    await user.save();
+    
+    const { data: user, error } = await supabase
+      .from('users')
+      .insert({
+        username,
+        email:     email.toLowerCase(),
+        password:  hashedPassword,
+        full_name: fullName  || '',
+        college:   college   || '',
+        branch:    branch    || '',
+        semester:  semester  || 1,
+      })
+      .select()
+      .single();
 
-    // Generate token
-    const token = generateToken(user._id, user.role);
+    if (error) throw error;
+
+    const token = generateToken(user.id, user.role);
 
     res.status(201).json({
       message: 'Signup successful',
       token,
-      user: user.toJSON()
+      user: formatUser(user),
     });
   } catch (error) {
     console.error('Signup error:', error);
@@ -43,30 +74,31 @@ router.post('/signup', validateSignup, async (req, res) => {
   }
 });
 
-// Login endpoint
 router.post('/login', validateLogin, async (req, res) => {
   try {
     const { email, password } = req.body;
 
-    // Find user by email
-    const user = await User.findOne({ email });
-    if (!user) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase())
+      .maybeSingle();
+
+    if (error || !user) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check password
-    const isPasswordValid = await user.comparePassword(password);
-    if (!isPasswordValid) {
+    const isValid = await bcryptjs.compare(password, user.password);
+    if (!isValid) {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Generate token
-    const token = generateToken(user._id, user.role);
+    const token = generateToken(user.id, user.role);
 
     res.json({
       message: 'Login successful',
       token,
-      user: user.toJSON()
+      user: formatUser(user),
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -74,113 +106,110 @@ router.post('/login', validateLogin, async (req, res) => {
   }
 });
 
-// Get current user
 router.get('/me', verifyToken, async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(user);
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', req.userId)
+      .maybeSingle();
+
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+
+    res.json(formatUser(user));
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user' });
   }
 });
 
-// Update user profile
 router.put('/profile', verifyToken, async (req, res) => {
   try {
     const { fullName, bio, college, branch, semester, avatar } = req.body;
-    
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      {
-        fullName,
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({
+        full_name:  fullName,
         bio,
         college,
         branch,
         semester,
         avatar,
-        updatedAt: Date.now()
-      },
-      { new: true }
-    );
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.userId)
+      .select()
+      .single();
 
-    res.json({
-      message: 'Profile updated successfully',
-      user: user.toJSON()
-    });
+    if (error) throw error;
+
+    res.json({ message: 'Profile updated successfully', user: formatUser(user) });
   } catch (error) {
     console.error('Profile update error:', error);
     res.status(500).json({ error: 'Failed to update profile' });
   }
 });
 
-// Get user by ID
+
 router.get('/user/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id)
-      .select('-password')
-      .populate('followers', 'username fullName avatar')
-      .populate('following', 'username fullName avatar');
-    
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' });
-    }
-    res.json(user);
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
+    if (error || !user) return res.status(404).json({ error: 'User not found' });
+
+    const [{ data: followerRows }, { data: followingRows }] = await Promise.all([
+      supabase.from('followers').select('follower_id, users!followers_follower_id_fkey(id, username, full_name, avatar)').eq('following_id', req.params.id),
+      supabase.from('followers').select('following_id, users!followers_following_id_fkey(id, username, full_name, avatar)').eq('follower_id', req.params.id),
+    ]);
+
+    const followers = (followerRows || []).map(r => r.users);
+    const following = (followingRows || []).map(r => r.users);
+
+    res.json({ ...formatUser(user), followers, following });
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user' });
   }
 });
 
-// Follow user
 router.post('/follow/:id', verifyToken, async (req, res) => {
   try {
-    const userId = req.userId;
-    const userToFollowId = req.params.id;
+    const userId          = req.userId;
+    const userToFollowId  = req.params.id;
 
     if (userId === userToFollowId) {
       return res.status(400).json({ error: 'Cannot follow yourself' });
     }
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { $addToSet: { following: userToFollowId } },
-      { new: true }
-    );
+    const { error } = await supabase
+      .from('followers')
+      .upsert({ follower_id: userId, following_id: userToFollowId });
 
-    await User.findByIdAndUpdate(
-      userToFollowId,
-      { $addToSet: { followers: userId } }
-    );
+    if (error) throw error;
 
-    res.json({ message: 'Followed successfully', user: user.toJSON() });
+    res.json({ message: 'Followed successfully' });
   } catch (error) {
     console.error('Follow error:', error);
     res.status(500).json({ error: 'Failed to follow user' });
   }
 });
 
-// Unfollow user
 router.post('/unfollow/:id', verifyToken, async (req, res) => {
   try {
-    const userId = req.userId;
-    const userToUnfollowId = req.params.id;
+    const { error } = await supabase
+      .from('followers')
+      .delete()
+      .eq('follower_id', req.userId)
+      .eq('following_id', req.params.id);
 
-    const user = await User.findByIdAndUpdate(
-      userId,
-      { $pull: { following: userToUnfollowId } },
-      { new: true }
-    );
+    if (error) throw error;
 
-    await User.findByIdAndUpdate(
-      userToUnfollowId,
-      { $pull: { followers: userId } }
-    );
-
-    res.json({ message: 'Unfollowed successfully', user: user.toJSON() });
+    res.json({ message: 'Unfollowed successfully' });
   } catch (error) {
     console.error('Unfollow error:', error);
     res.status(500).json({ error: 'Failed to unfollow user' });

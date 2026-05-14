@@ -1,12 +1,13 @@
 'use client';
 
+import { Suspense } from 'react';
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
-import { NoteCard } from '@/components/NoteCard';
+import NoteCard from '@/components/NoteCard';
 import { useToast } from '@/hooks/use-toast';
 import { searchApi } from '@/lib/api';
 
@@ -16,7 +17,7 @@ interface SearchResults {
   groups?: any[];
 }
 
-export default function SearchPage() {
+function SearchContent() {
   const searchParams = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
   const { toast } = useToast();
@@ -112,12 +113,9 @@ export default function SearchPage() {
           </div>
         ) : query ? (
           <>
-            {/* Notes Results */}
             {(searchType === 'all' || searchType === 'notes') && results.notes && (
               <div className="mb-12">
-                <h2 className="text-2xl font-bold mb-4">
-                  Notes ({results.notes.data?.length || 0})
-                </h2>
+                <h2 className="text-2xl font-bold mb-4">Notes ({results.notes.data?.length || 0})</h2>
                 {results.notes.data && results.notes.data.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {results.notes.data.map((note: any) => (
@@ -132,21 +130,14 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* Users Results */}
             {(searchType === 'all' || searchType === 'users') && results.users && (
               <div className="mb-12">
-                <h2 className="text-2xl font-bold mb-4">
-                  Users ({results.users.data?.length || 0})
-                </h2>
+                <h2 className="text-2xl font-bold mb-4">Users ({results.users.data?.length || 0})</h2>
                 {results.users.data && results.users.data.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     {results.users.data.map((user: any) => (
                       <Card key={user._id} className="bg-slate-700 border-slate-600 p-4">
-                        <img
-                          src={user.avatar}
-                          alt={user.username}
-                          className="w-12 h-12 rounded-full mx-auto mb-3 object-cover"
-                        />
+                        <img src={user.avatar} alt={user.username} className="w-12 h-12 rounded-full mx-auto mb-3 object-cover" />
                         <h3 className="font-semibold text-center mb-1">{user.fullName}</h3>
                         <p className="text-sm text-slate-400 text-center mb-3">@{user.username}</p>
                         <Button asChild variant="outline" className="w-full border-slate-600 text-slate-300 hover:text-white" size="sm">
@@ -163,20 +154,15 @@ export default function SearchPage() {
               </div>
             )}
 
-            {/* Groups Results */}
             {(searchType === 'all' || searchType === 'groups') && results.groups && (
               <div className="mb-12">
-                <h2 className="text-2xl font-bold mb-4">
-                  Groups ({results.groups.data?.length || 0})
-                </h2>
+                <h2 className="text-2xl font-bold mb-4">Groups ({results.groups.data?.length || 0})</h2>
                 {results.groups.data && results.groups.data.length > 0 ? (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {results.groups.data.map((group: any) => (
                       <Card key={group._id} className="bg-slate-700 border-slate-600 p-4">
                         <h3 className="text-lg font-bold mb-2">{group.name}</h3>
-                        <p className="text-slate-300 text-sm mb-3 line-clamp-2">
-                          {group.description}
-                        </p>
+                        <p className="text-slate-300 text-sm mb-3 line-clamp-2">{group.description}</p>
                         <div className="grid grid-cols-2 text-center gap-2 mb-4 pb-4 border-b border-slate-600">
                           <div>
                             <p className="font-bold">{group.membersCount}</p>
@@ -208,5 +194,13 @@ export default function SearchPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function SearchPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-900 flex items-center justify-center text-white">Loading...</div>}>
+      <SearchContent />
+    </Suspense>
   );
 }

@@ -1,6 +1,5 @@
-{
+Set-Content "vercel.json" '{
   "buildCommand": "next build",
   "outputDirectory": ".next",
-  "framework": "nextjs",
-  "ignoreCommand": "exit 1"
-}
+  "framework": "nextjs"
+}'
